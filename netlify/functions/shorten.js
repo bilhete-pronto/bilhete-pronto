@@ -7,7 +7,23 @@
 // instala o pacote "@netlify/blobs" automaticamente antes do deploy). Não funciona
 // em deploys manuais (arrastar pasta/zip), porque não há instalação de dependências.
 
-const { getStore, connectLambda } = require('@netlify/blobs');
+const { getStore, setEnvironmentContext } = require('@netlify/blobs');
+
+// Em vez de usar connectLambda() (que configura um caminho de leitura via "borda"/CDN
+// e sofre com atraso de propagação — foi exatamente isso que causava o link "não
+// encontrado" logo após ser criado), montamos o contexto nós mesmos, sem a URL de
+// borda. Isso força todas as leituras/escritas a irem direto pro servidor central da
+// Netlify, que é consistente na hora.
+function connectDireto(event) {
+  const raw = Buffer.from(event.blobs, 'base64').toString('utf8');
+  const data = JSON.parse(raw);
+  setEnvironmentContext({
+    deployID: event.headers['x-nf-deploy-id'],
+    siteID: event.headers['x-nf-site-id'],
+    token: data.token
+    // Propositalmente NÃO incluímos "edgeURL" aqui.
+  });
+}
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -48,14 +64,14 @@ exports.handler = async function (event) {
   }
 
   try {
-    connectLambda(event);
+    connectDireto(event);
     const store = getStore('links');
 
     // Gera um código e garante que ele ainda não está em uso (tenta algumas vezes).
     let code = '';
     for (let attempt = 0; attempt < 5; attempt++) {
       const candidate = randomCode();
-      const existing = await store.get(candidate, { type: 'text', consistency: 'strong' });
+      const existing = await store.get(candidate, { type: 'text' });
       if (existing === null) {
         code = candidate;
         break;
@@ -74,7 +90,7 @@ exports.handler = async function (event) {
     // Confere na hora se o que acabamos de gravar já está lendo certo (debug temporário)
     let verify = null;
     try {
-      verify = await store.get(code, { type: 'text', consistency: 'strong' });
+      verify = await store.get(code, { type: 'text' });
     } catch (e) {
       verify = 'ERRO ao verificar: ' + String(e);
     }
