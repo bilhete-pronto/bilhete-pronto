@@ -71,10 +71,18 @@ exports.handler = async function (event) {
     const host = (event.headers && (event.headers['x-forwarded-host'] || event.headers.host)) || '';
     const brandedUrl = host ? ('https://' + host + '/' + code) : url;
 
+    // Confere na hora se o que acabamos de gravar já está lendo certo (debug temporário)
+    let verify = null;
+    try {
+      verify = await store.get(code, { type: 'text' });
+    } catch (e) {
+      verify = 'ERRO ao verificar: ' + String(e);
+    }
+
     return {
       statusCode: 200,
       headers: Object.assign({ 'Content-Type': 'application/json' }, CORS_HEADERS),
-      body: JSON.stringify({ result_url: brandedUrl })
+      body: JSON.stringify({ result_url: brandedUrl, debug_code: code, debug_verify: verify })
     };
   } catch (err) {
     return {
