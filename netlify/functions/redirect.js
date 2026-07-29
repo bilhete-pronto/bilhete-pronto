@@ -1,7 +1,19 @@
 // Netlify Function: recebe o clique em bilhete-pronto.netlify.app/XXXX, busca o
 // código no Netlify Blobs, e redireciona de verdade para o link original.
 
-const { getStore, connectLambda } = require('@netlify/blobs');
+const { getStore, setEnvironmentContext } = require('@netlify/blobs');
+
+// Ver explicação completa no shorten.js: montamos o contexto sem "edgeURL" pra forçar
+// leituras direto no servidor central da Netlify, evitando atraso de propagação.
+function connectDireto(event) {
+  const raw = Buffer.from(event.blobs, 'base64').toString('utf8');
+  const data = JSON.parse(raw);
+  setEnvironmentContext({
+    deployID: event.headers['x-nf-deploy-id'],
+    siteID: event.headers['x-nf-site-id'],
+    token: data.token
+  });
+}
 
 exports.handler = async function (event) {
   const parts = (event.path || '').split('/').filter(Boolean);
@@ -16,9 +28,9 @@ exports.handler = async function (event) {
 
   let debugInfo = '';
   try {
-    connectLambda(event);
+    connectDireto(event);
     const store = getStore('links');
-    const destino = await store.get(code, { type: 'text', consistency: 'strong' });
+    const destino = await store.get(code, { type: 'text' });
 
     if (destino && /^https?:\/\//i.test(destino)) {
       return {
