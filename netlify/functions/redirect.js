@@ -18,7 +18,7 @@ exports.handler = async function (event) {
   try {
     connectLambda(event);
     const store = getStore('links');
-    const destino = await store.get(code, { type: 'text' });
+    const destino = await store.get(code, { type: 'text', consistency: 'strong' });
 
     if (destino && /^https?:\/\//i.test(destino)) {
       return {
