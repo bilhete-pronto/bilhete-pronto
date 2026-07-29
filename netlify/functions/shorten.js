@@ -55,7 +55,7 @@ exports.handler = async function (event) {
     let code = '';
     for (let attempt = 0; attempt < 5; attempt++) {
       const candidate = randomCode();
-      const existing = await store.get(candidate, { type: 'text' });
+      const existing = await store.get(candidate, { type: 'text', consistency: 'strong' });
       if (existing === null) {
         code = candidate;
         break;
@@ -74,7 +74,7 @@ exports.handler = async function (event) {
     // Confere na hora se o que acabamos de gravar já está lendo certo (debug temporário)
     let verify = null;
     try {
-      verify = await store.get(code, { type: 'text' });
+      verify = await store.get(code, { type: 'text', consistency: 'strong' });
     } catch (e) {
       verify = 'ERRO ao verificar: ' + String(e);
     }
