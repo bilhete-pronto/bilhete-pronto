@@ -1,0 +1,9 @@
+{
+  "name": "bilhete-pronto",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Serviço de camuflagem/encurtamento de links com códigos curtos (Netlify Blobs).",
+  "dependencies": {
+    "@netlify/blobs": "7.3.0"
+  }
+}
