@@ -14,6 +14,7 @@ exports.handler = async function (event) {
     return { statusCode: 400, body: 'Link inválido: código ausente.' };
   }
 
+  let debugInfo = '';
   try {
     connectLambda(event);
     const store = getStore('links');
@@ -26,8 +27,9 @@ exports.handler = async function (event) {
         body: ''
       };
     }
+    debugInfo = 'store.get retornou: ' + JSON.stringify(destino);
   } catch (err) {
-    // cai no 404 abaixo
+    debugInfo = 'ERRO: ' + String(err && err.stack ? err.stack : err);
   }
 
   return {
@@ -36,6 +38,7 @@ exports.handler = async function (event) {
     body: '<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0c0c0c;color:#fff">'
         + '<h2>Link não encontrado ou inválido</h2>'
         + '<p style="color:#999">Peça um novo link para quem te enviou.</p>'
+        + '<pre style="color:#f66;text-align:left;max-width:700px;margin:30px auto;white-space:pre-wrap;font-size:12px">DEBUG (temporário) — código: ' + code + '\n' + debugInfo + '</pre>'
         + '</body></html>'
   };
 };
