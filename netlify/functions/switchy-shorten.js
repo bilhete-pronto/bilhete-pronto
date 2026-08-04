@@ -69,6 +69,9 @@ exports.handler = async function (event) {
   const longUrl = body.url;
   const slug    = (body.slug || '').trim();
   const domain  = (body.domain || process.env.SWITCHY_DEFAULT_DOMAIN || '').trim();
+  /* rotator (opcional): [{ url, percentage }, ...] — distribui esse ÚNICO link entre
+     vários destinos por porcentagem, usando o Rotator/A-B Testing da própria Switchy. */
+  const rotator = Array.isArray(body.rotator) ? body.rotator : null;
 
   if (!longUrl) {
     return { statusCode: 400, headers: CORS_HEADERS, body: JSON.stringify({ error: 'Campo "url" é obrigatório' }) };
@@ -84,6 +87,17 @@ exports.handler = async function (event) {
   }
 
   const AUTH_HEADERS = { 'Content-Type': 'application/json', 'Api-Authorization': apiKey };
+
+  /* Monta o campo de rotator no formato que a Switchy espera (extraOptionsLinkRotator).
+     ATENÇÃO: a documentação pública não mostra um exemplo completo desse formato — segui
+     o mesmo padrão usado no exemplo de geolocalização deles ({ url, value }), onde "value"
+     aqui é a porcentagem. Se a Switchy usar outro nome de campo, é só me avisar com o "raw"
+     do erro que eu ajusto essa função (buildRotatorPayload) rapidinho. */
+  function buildRotatorPayload(items) {
+    return items.map(function (r) {
+      return { url: r.url, value: Number(r.percentage) || 0 };
+    });
+  }
 
   function extractResultUrl(data) {
     const link = (data && (data.link || data)) || {};
@@ -103,12 +117,14 @@ exports.handler = async function (event) {
        só troca o destino do mesmo link. */
     if (slug && domain) {
       attemptedUpdate = true;
+      const updatePayload = { url: longUrl };
+      if (rotator && rotator.length) updatePayload.extraOptionsLinkRotator = buildRotatorPayload(rotator);
       switchyRes = await fetch(
         'https://api.switchy.io/v1/links/by-domain/' + encodeURIComponent(domain) + '/' + encodeURIComponent(slug),
         {
           method: 'PUT',
           headers: AUTH_HEADERS,
-          body: JSON.stringify({ link: { url: longUrl } })
+          body: JSON.stringify({ link: updatePayload })
         }
       );
 
@@ -136,6 +152,7 @@ exports.handler = async function (event) {
     const linkPayload = { url: longUrl };
     if (domain) linkPayload.domain = domain;
     if (slug)   linkPayload.id = slug;
+    if (rotator && rotator.length) linkPayload.extraOptionsLinkRotator = buildRotatorPayload(rotator);
 
     switchyRes = await fetch('https://api.switchy.io/v1/links/create', {
       method: 'POST',
