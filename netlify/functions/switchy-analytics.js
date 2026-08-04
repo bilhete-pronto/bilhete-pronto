@@ -44,34 +44,36 @@
 const SWITCHY_API_KEY_FALLBACK = 'f23a7edb-0a63-4390-95e8-900ccedfeab6';
 const GRAPHQL_ENDPOINT = 'https://graphql.switchy.io/v1/graphql';
 
+/* A Switchy usa uma API gerada via Hasura (dá pra notar pelos nomes "_by_pk", "_aggregate"
+   descobertos na introspecção da raiz). Isso significa que o campo certo é "links" (no
+   plural, com filtro "where"), não "link". Ainda não sabemos os nomes exatos dos campos
+   de filtro (domain/id?) nem onde ficam as estatísticas dentro do tipo "links" — por isso
+   mantemos o fallback de introspecção também aqui. */
 const QUERY_STATS = `
   query LinkStats($domain: String!, $slug: String!) {
-    link(domain: $domain, id: $slug) {
+    links(where: { domain: { _eq: $domain }, id: { _eq: $slug } }) {
       id
+      domain
       url
-      stats {
-        clicks
-        uniqueVisitors
-        dailyClicks { date clicks }
-        countries { country visits unique percentVisits }
-        cities { city visits unique percentVisits }
-        referers { referer visits unique percentVisits }
-        devices { device visits unique percentVisits }
-      }
+      clicks
+      uniqueVisitors
     }
   }
 `;
 
 const INTROSPECT_QUERY = `
-  query IntrospectRoot {
-    __schema {
-      queryType {
+  query IntrospectLinksSchema {
+    linksType: __type(name: "links") {
+      name
+      fields {
         name
-        fields {
-          name
-          args { name type { name kind ofType { name kind } } }
-          type { name kind ofType { name kind ofType { name kind } } }
-        }
+        type { name kind ofType { name kind ofType { name kind } } }
+      }
+    }
+    queryRootType: __type(name: "query_root") {
+      fields {
+        name
+        args { name type { name kind ofType { name kind } } }
       }
     }
   }
@@ -141,20 +143,23 @@ exports.handler = async function (event) {
       };
     }
 
-    const link = result.data.data && result.data.data.link;
-    if (!link || !link.stats) {
-      return { statusCode: 404, headers: CORS_HEADERS, body: JSON.stringify({ error: 'Link não encontrado ou sem estatísticas ainda', raw: result.data }) };
+    const links = result.data.data && result.data.data.links;
+    if (!links || !links.length) {
+      return { statusCode: 404, headers: CORS_HEADERS, body: JSON.stringify({ error: 'Link não encontrado com esse domínio/padrão', raw: result.data }) };
     }
 
-    const stats = link.stats;
+    const link = links[0];
+    /* Por enquanto só temos certeza de clicks/uniqueVisitors direto no registro do link.
+       Os detalhamentos (países, cidades, referrers, dispositivos, série diária) ainda
+       precisam ser descobertos no schema — ficam vazios até o próximo ajuste. */
     const out = {
-      clicks: stats.clicks || 0,
-      users: stats.uniqueVisitors || 0,
-      dailyClicks: (stats.dailyClicks || []).map(function (d) { return { date: d.date, clicks: d.clicks }; }),
-      countries: (stats.countries || []).map(function (c) { return { country: c.country, visits: c.visits, unique: c.unique, percentVisits: c.percentVisits }; }),
-      cities: (stats.cities || []).map(function (c) { return { city: c.city, visits: c.visits, unique: c.unique, percentVisits: c.percentVisits }; }),
-      referrers: (stats.referers || []).map(function (r) { return { referrer: r.referer, visits: r.visits, unique: r.unique, percentVisits: r.percentVisits }; }),
-      devices: (stats.devices || []).map(function (d) { return { device: d.device, visits: d.visits, unique: d.unique, percentVisits: d.percentVisits }; })
+      clicks: link.clicks || 0,
+      users: link.uniqueVisitors || 0,
+      dailyClicks: [],
+      countries: [],
+      cities: [],
+      referrers: [],
+      devices: []
     };
 
     return {
