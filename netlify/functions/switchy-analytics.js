@@ -56,7 +56,7 @@ const QUERY_STATS = `
       domain
       url
       clicks
-      uniqueVisitors
+      uniq
     }
   }
 `;
@@ -149,12 +149,13 @@ exports.handler = async function (event) {
     }
 
     const link = links[0];
-    /* Por enquanto só temos certeza de clicks/uniqueVisitors direto no registro do link.
-       Os detalhamentos (países, cidades, referrers, dispositivos, série diária) ainda
-       precisam ser descobertos no schema — ficam vazios até o próximo ajuste. */
+    /* Confirmado no schema real da Switchy: o tipo "links" só expõe "clicks" e "uniq"
+       diretamente — não existe (nessa API pública) um detalhamento por país, cidade,
+       referrer, dispositivo ou série diária. Isso só deve existir na área logada do
+       site deles, sem uma rota de API pública equivalente. */
     const out = {
       clicks: link.clicks || 0,
-      users: link.uniqueVisitors || 0,
+      users: link.uniq || 0,
       dailyClicks: [],
       countries: [],
       cities: [],
