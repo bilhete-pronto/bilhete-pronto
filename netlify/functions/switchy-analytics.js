@@ -63,10 +63,17 @@ const QUERY_STATS = `
 `;
 
 const INTROSPECT_QUERY = `
-  query IntrospectLink {
-    linkType: __type(name: "Link") { name fields { name type { name kind ofType { name kind } } } }
-    statsType: __type(name: "LinkStats") { name fields { name type { name kind ofType { name kind } } } }
-    statType: __type(name: "Stats") { name fields { name type { name kind ofType { name kind } } } }
+  query IntrospectRoot {
+    __schema {
+      queryType {
+        name
+        fields {
+          name
+          args { name type { name kind ofType { name kind } } }
+          type { name kind ofType { name kind ofType { name kind } } }
+        }
+      }
+    }
   }
 `;
 
