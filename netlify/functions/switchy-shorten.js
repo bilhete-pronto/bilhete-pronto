@@ -1,14 +1,23 @@
 /**
  * Netlify Function: switchy-shorten
  * ------------------------------------------------------------------
- * Cria um link camuflado usando a API OFICIAL da Switchy:
- *   POST https://api.switchy.io/v1/links/create
+ * Cria OU atualiza um link camuflado usando a API OFICIAL da Switchy:
+ *   Criar:    POST https://api.switchy.io/v1/links/create
+ *   Atualizar: PUT https://api.switchy.io/v1/links/by-domain/:domain/:id
  *
- * Por que essa function existe:
+ * Por que "criar OU atualizar":
+ *   A ideia do Gerador de Link é poder trocar o número de destino mantendo o
+ *   MESMO link/padrão (ex.: hi.switchy.io/RMComunidadeTR) — assim não precisa
+ *   reconfigurar o Rotator da Switchy toda vez. Só que a Switchy não deixa criar
+ *   dois links com o mesmo padrão no mesmo domínio (dá erro de conflito).
+ *   Por isso, quando um padrão é informado, essa function primeiro TENTA
+ *   ATUALIZAR o link que já existe com esse padrão; só cria um novo se ainda
+ *   não existir nenhum link com esse padrão.
+ *
+ * Por que essa function existe (chamada via servidor, não direto do navegador):
  *   A API da Switchy exige uma API Key (header "Api-Authorization"). Essa chave
- *   NUNCA pode ficar exposta no código do navegador (qualquer pessoa poderia
- *   ver e usar sua conta). Por isso essa chamada precisa passar por um servidor —
- *   exatamente como já funciona a function "shorten" que vocês já usam hoje.
+ *   NUNCA pode ficar exposta no código do navegador. Por isso essa chamada
+ *   precisa passar por um servidor — como já funciona a function "shorten".
  *
  * COMO INSTALAR:
  *   1) Salve este arquivo dentro do MESMO projeto Netlify que já hospeda a
@@ -16,9 +25,6 @@
  *          netlify/functions/switchy-shorten.js
  *   2) A API Key já está preenchida no código (constante SWITCHY_API_KEY_FALLBACK
  *      logo abaixo) — não precisa configurar nada no painel do Netlify pra funcionar.
- *      (Opcional, mais seguro): se preferir não deixar a chave escrita no código,
- *      crie a variável de ambiente SWITCHY_API_KEY no painel (Site configuration →
- *      Environment variables) — ela tem prioridade sobre o valor fixo.
  *   3) Faça o deploy (git push, ou "Trigger deploy" manual no painel).
  *   4) A function passa a responder em:
  *          https://bilhete-pronto.netlify.app/.netlify/functions/switchy-shorten
@@ -27,25 +33,15 @@
  *   Requisição (POST, JSON):
  *     { "url": "https://wa.me/...", "slug": "RMComunidadeTR" (opcional), "domain": "hi.switchy.io" (opcional) }
  *   Resposta de sucesso (200):
- *     { "result_url": "https://hi.switchy.io/RMComunidadeTR", "raw": {...resposta original da Switchy...} }
+ *     { "result_url": "https://hi.switchy.io/RMComunidadeTR", "raw": {...} }
  *   Resposta de erro:
  *     { "error": "mensagem", "detail"/"raw": {...} }
- *
- * ATENÇÃO: a documentação pública da Switchy mostra o formato da REQUISIÇÃO,
- * mas não publica um exemplo completo do formato da RESPOSTA de criação.
- * Por isso, abaixo eu tento vários nomes de campo possíveis para achar a URL final,
- * e devolvo sempre o "raw" (resposta crua da Switchy) junto — se a Switchy usar um
- * nome de campo diferente do esperado, é só olhar o "raw" no console do navegador
- * e ajustar a linha do "resultUrl" logo abaixo.
  */
 
 /*
  * ⚠️ CHAVE DA API — recomendo fortemente regenerar essa chave no painel da Switchy
  * depois que tudo estiver funcionando (Settings → API), já que ela foi compartilhada
  * em uma conversa de chat. Depois de gerar a nova, é só substituir o valor abaixo.
- * Se você preferir não deixar a chave escrita no código, pode em vez disso criar a
- * variável de ambiente SWITCHY_API_KEY no painel do Netlify — se ela existir, tem
- * prioridade sobre o valor fixo abaixo.
  */
 const SWITCHY_API_KEY_FALLBACK = 'f23a7edb-0a63-4390-95e8-900ccedfeab6';
 
@@ -87,19 +83,63 @@ exports.handler = async function (event) {
     };
   }
 
-  /* Monta o payload conforme a documentação da Switchy (POST /v1/links/create).
-     "id" é o apelido/padrão customizado do link (ex.: RMComunidadeTR). */
-  const linkPayload = { url: longUrl };
-  if (domain) linkPayload.domain = domain;
-  if (slug)   linkPayload.id = slug;
+  const AUTH_HEADERS = { 'Content-Type': 'application/json', 'Api-Authorization': apiKey };
+
+  function extractResultUrl(data) {
+    const link = (data && (data.link || data)) || {};
+    return (
+      link.shortUrl || link.short_url || link.fullUrl || link.full_url || link.url_short ||
+      (link.domain && (link.id || link.uniqId) ? ('https://' + link.domain + '/' + (link.id || link.uniqId)) : null) ||
+      (domain && slug ? ('https://' + domain + '/' + slug) : null)
+    );
+  }
 
   try {
-    const switchyRes = await fetch('https://api.switchy.io/v1/links/create', {
+    let switchyRes;
+    let attemptedUpdate = false;
+
+    /* Se um padrão (slug) foi informado, tenta ATUALIZAR primeiro um link que já
+       exista com esse padrão nesse domínio — assim, trocar o número não gera conflito,
+       só troca o destino do mesmo link. */
+    if (slug && domain) {
+      attemptedUpdate = true;
+      switchyRes = await fetch(
+        'https://api.switchy.io/v1/links/by-domain/' + encodeURIComponent(domain) + '/' + encodeURIComponent(slug),
+        {
+          method: 'PUT',
+          headers: AUTH_HEADERS,
+          body: JSON.stringify({ link: { url: longUrl } })
+        }
+      );
+
+      /* 404 = ainda não existe nenhum link com esse padrão → cai pra criação normal abaixo. */
+      if (switchyRes.status !== 404) {
+        const data = await switchyRes.json().catch(() => null);
+        if (!switchyRes.ok || !data) {
+          return {
+            statusCode: switchyRes.status || 502,
+            headers: CORS_HEADERS,
+            body: JSON.stringify({ error: 'A Switchy retornou um erro ao ATUALIZAR o link existente', detail: data })
+          };
+        }
+        const resultUrl = extractResultUrl(data);
+        return {
+          statusCode: 200,
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ result_url: resultUrl, raw: data, action: 'updated' })
+        };
+      }
+      /* status 404 → segue para criar um link novo */
+    }
+
+    /* Cria um link novo (primeira vez com esse padrão, ou sem padrão nenhum). */
+    const linkPayload = { url: longUrl };
+    if (domain) linkPayload.domain = domain;
+    if (slug)   linkPayload.id = slug;
+
+    switchyRes = await fetch('https://api.switchy.io/v1/links/create', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Api-Authorization': apiKey
-      },
+      headers: AUTH_HEADERS,
       body: JSON.stringify({ link: linkPayload })
     });
 
@@ -109,16 +149,16 @@ exports.handler = async function (event) {
       return {
         statusCode: switchyRes.status || 502,
         headers: CORS_HEADERS,
-        body: JSON.stringify({ error: 'A Switchy retornou um erro ao criar o link', detail: data })
+        body: JSON.stringify({
+          error: attemptedUpdate
+            ? 'A Switchy retornou um erro ao criar o link (a atualização não encontrou um link existente, e a criação também falhou)'
+            : 'A Switchy retornou um erro ao criar o link',
+          detail: data
+        })
       };
     }
 
-    const link = data.link || data;
-    const resultUrl =
-      link.shortUrl || link.short_url || link.fullUrl || link.full_url || link.url_short ||
-      (link.domain && (link.id || link.uniqId) ? ('https://' + link.domain + '/' + (link.id || link.uniqId)) : null) ||
-      (domain && slug ? ('https://' + domain + '/' + slug) : null);
-
+    const resultUrl = extractResultUrl(data);
     if (!resultUrl) {
       return {
         statusCode: 502,
@@ -133,7 +173,7 @@ exports.handler = async function (event) {
     return {
       statusCode: 200,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ result_url: resultUrl, raw: data })
+      body: JSON.stringify({ result_url: resultUrl, raw: data, action: 'created' })
     };
   } catch (err) {
     return { statusCode: 500, headers: CORS_HEADERS, body: JSON.stringify({ error: err.message }) };
