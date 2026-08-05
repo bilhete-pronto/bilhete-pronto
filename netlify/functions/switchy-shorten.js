@@ -87,6 +87,50 @@ exports.handler = async function (event) {
   }
 
   const AUTH_HEADERS = { 'Content-Type': 'application/json', 'Api-Authorization': apiKey };
+  const folderName = (body.folderName || '').trim();
+
+  /* Tenta associar o link a uma pasta da Switchy com esse nome:
+     1) Procura (via GraphQL) se já existe uma pasta com esse nome exato.
+     2) Se não existir, TENTA criar (experimental — a documentação pública da Switchy
+        só confirma "alguns endpoints REST para poucas mutações", sem citar pastas
+        explicitamente, então isso pode não ser suportado).
+     3) Se nada funcionar, o link é criado/atualizado normalmente, só SEM pasta,
+        e devolvemos um aviso explicando o que fazer (criar a pasta manualmente 1x). */
+  async function resolveFolderId() {
+    if (!folderName) return { folderId: null, warning: null };
+    try {
+      const gqlRes = await fetch('https://graphql.switchy.io/v1/graphql', {
+        method: 'POST',
+        headers: AUTH_HEADERS,
+        body: JSON.stringify({
+          query: 'query FindFolder($name: String!) { folders(where: { name: { _eq: $name } }) { id name } }',
+          variables: { name: folderName }
+        })
+      });
+      const gqlData = await gqlRes.json().catch(() => null);
+      const found = gqlData && gqlData.data && gqlData.data.folders && gqlData.data.folders[0];
+      if (found && found.id) return { folderId: found.id, warning: null };
+    } catch (e) { /* segue e tenta criar abaixo */ }
+
+    try {
+      const createRes = await fetch('https://api.switchy.io/v1/folders/create', {
+        method: 'POST',
+        headers: AUTH_HEADERS,
+        body: JSON.stringify({ folder: { name: folderName } })
+      });
+      if (createRes.ok) {
+        const createData = await createRes.json().catch(() => null);
+        const newId = createData && ((createData.folder && createData.folder.id) || createData.id);
+        if (newId) return { folderId: newId, warning: null };
+      }
+    } catch (e) { /* noop */ }
+
+    return {
+      folderId: null,
+      warning: 'Não consegui sincronizar a pasta "' + folderName + '" com a Switchy automaticamente (a API deles pode não suportar criar pastas). Crie essa pasta manualmente UMA VEZ no painel da Switchy, com esse nome exato, e os próximos links serão associados a ela automaticamente.'
+    };
+  }
+  const folderResolved = await resolveFolderId();
 
   /* Monta o campo de rotator no formato que a Switchy espera (extraOptionsLinkRotator).
      ATENÇÃO: a documentação pública não mostra um exemplo completo desse formato — segui
@@ -119,6 +163,7 @@ exports.handler = async function (event) {
       attemptedUpdate = true;
       const updatePayload = { url: longUrl };
       if (rotator && rotator.length) updatePayload.extraOptionsLinkRotator = buildRotatorPayload(rotator);
+      if (folderResolved.folderId) updatePayload.folderId = folderResolved.folderId;
       switchyRes = await fetch(
         'https://api.switchy.io/v1/links/by-domain/' + encodeURIComponent(domain) + '/' + encodeURIComponent(slug),
         {
@@ -142,7 +187,7 @@ exports.handler = async function (event) {
         return {
           statusCode: 200,
           headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ result_url: resultUrl, raw: data, action: 'updated' })
+          body: JSON.stringify({ result_url: resultUrl, raw: data, action: 'updated', warning: folderResolved.warning })
         };
       }
       /* status 404 → segue para criar um link novo */
@@ -153,6 +198,7 @@ exports.handler = async function (event) {
     if (domain) linkPayload.domain = domain;
     if (slug)   linkPayload.id = slug;
     if (rotator && rotator.length) linkPayload.extraOptionsLinkRotator = buildRotatorPayload(rotator);
+    if (folderResolved.folderId) linkPayload.folderId = folderResolved.folderId;
 
     switchyRes = await fetch('https://api.switchy.io/v1/links/create', {
       method: 'POST',
@@ -190,7 +236,7 @@ exports.handler = async function (event) {
     return {
       statusCode: 200,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ result_url: resultUrl, raw: data, action: 'created' })
+      body: JSON.stringify({ result_url: resultUrl, raw: data, action: 'created', warning: folderResolved.warning })
     };
   } catch (err) {
     return { statusCode: 500, headers: CORS_HEADERS, body: JSON.stringify({ error: err.message }) };
