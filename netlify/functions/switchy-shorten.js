@@ -72,6 +72,10 @@ exports.handler = async function (event) {
   /* rotator (opcional): [{ url, percentage }, ...] — distribui esse ÚNICO link entre
      vários destinos por porcentagem, usando o Rotator/A-B Testing da própria Switchy. */
   const rotator = Array.isArray(body.rotator) ? body.rotator : null;
+  /* fallbackUrl (opcional): link do Instagram da pasta — usado como destino de
+     "linkExpiration" da Switchy, funcionando como link de segurança (matriz):
+     se der algum problema com esse link, a Switchy manda pra esse fallback. */
+  const fallbackUrl = (body.fallbackUrl || '').trim();
 
   if (!longUrl) {
     return { statusCode: 400, headers: CORS_HEADERS, body: JSON.stringify({ error: 'Campo "url" é obrigatório' }) };
@@ -164,6 +168,12 @@ exports.handler = async function (event) {
       const updatePayload = { url: longUrl };
       if (rotator && rotator.length) updatePayload.extraOptionsLinkRotator = buildRotatorPayload(rotator);
       if (folderResolved.folderId) updatePayload.folderId = folderResolved.folderId;
+      /* ⚠️ EXPERIMENTAL: não há documentação pública confirmando que "linkExpiration"
+         funciona como fallback de erro (só vimos esse campo existir no formato de dados
+         de um link real). Setamos "enable: true" sem data, na esperança de que a Switchy
+         trate isso como "sempre disponível como destino alternativo". Se não funcionar
+         como esperado, é só avisar que a gente ajusta. */
+      if (fallbackUrl) updatePayload.linkExpiration = { url: fallbackUrl, enable: true, timezone: -3 };
       switchyRes = await fetch(
         'https://api.switchy.io/v1/links/by-domain/' + encodeURIComponent(domain) + '/' + encodeURIComponent(slug),
         {
@@ -199,6 +209,7 @@ exports.handler = async function (event) {
     if (slug)   linkPayload.id = slug;
     if (rotator && rotator.length) linkPayload.extraOptionsLinkRotator = buildRotatorPayload(rotator);
     if (folderResolved.folderId) linkPayload.folderId = folderResolved.folderId;
+    if (fallbackUrl) linkPayload.linkExpiration = { url: fallbackUrl, enable: true, timezone: -3 };
 
     switchyRes = await fetch('https://api.switchy.io/v1/links/create', {
       method: 'POST',
