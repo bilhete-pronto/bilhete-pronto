@@ -108,6 +108,12 @@ exports.handler = async function (event) {
   if (fallbackUrl && rotator && !rotator.some(function (r) { return r.url === fallbackUrl; })) {
     rotator.push({ url: fallbackUrl, percentage: 0 });
   }
+  /* O campo "url" PRINCIPAL do link (o que aparece no topo da tela da Switchy) deve
+     ser o link do Instagram quando ele existir — funciona como a base/estrutura do
+     link. Quem decide o destino real do dia a dia é o Rotator (WhatsApp a 100%,
+     Instagram a 0%); esse "url" principal só entra em jogo se o Rotator, por algum
+     motivo, não estiver ativo — nesse caso cai direto no Instagram, nunca no WhatsApp. */
+  const mainUrl = fallbackUrl || longUrl;
 
   /* Tenta associar o link a uma pasta da Switchy com esse nome:
      1) Procura (via GraphQL) se já existe uma pasta com esse nome exato.
@@ -181,7 +187,7 @@ exports.handler = async function (event) {
        só troca o destino do mesmo link. */
     if (slug && domain) {
       attemptedUpdate = true;
-      const updatePayload = { url: longUrl };
+      const updatePayload = { url: mainUrl };
       if (rotator && rotator.length) updatePayload.extraOptionsLinkRotator = buildRotatorPayload(rotator);
       if (folderResolved.folderId) updatePayload.folderId = folderResolved.folderId;
       switchyRes = await fetch(
@@ -214,7 +220,7 @@ exports.handler = async function (event) {
     }
 
     /* Cria um link novo (primeira vez com esse padrão, ou sem padrão nenhum). */
-    const linkPayload = { url: longUrl };
+    const linkPayload = { url: mainUrl };
     if (domain) linkPayload.domain = domain;
     if (slug)   linkPayload.id = slug;
     if (rotator && rotator.length) linkPayload.extraOptionsLinkRotator = buildRotatorPayload(rotator);
