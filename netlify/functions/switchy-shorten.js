@@ -71,10 +71,13 @@ exports.handler = async function (event) {
   const domain  = (body.domain || process.env.SWITCHY_DEFAULT_DOMAIN || '').trim();
   /* rotator (opcional): [{ url, percentage }, ...] — distribui esse ÚNICO link entre
      vários destinos por porcentagem, usando o Rotator/A-B Testing da própria Switchy. */
-  const rotator = Array.isArray(body.rotator) ? body.rotator : null;
-  /* fallbackUrl (opcional): link do Instagram da pasta — usado como destino de
-     "linkExpiration" da Switchy, funcionando como link de segurança (matriz):
-     se der algum problema com esse link, a Switchy manda pra esse fallback. */
+  const rotatorInput = Array.isArray(body.rotator) ? body.rotator : null;
+  /* fallbackUrl (opcional): link do Instagram da pasta ("link matriz"). Em vez de usar
+     "Link Expiration" (que é baseado em DATA, não em erro — testamos e confirmamos que
+     não serve pro que queremos), a forma correta é incluir esse link como MAIS UM
+     destino dentro do próprio Rotator/A-B Testing, só que com 0% de distribuição.
+     Assim ele já fica "plugado" no link, pronto pra virar 100% manualmente (trocando
+     a porcentagem lá na Switchy) se precisar de um failover rápido. */
   const fallbackUrl = (body.fallbackUrl || '').trim();
 
   if (!longUrl) {
@@ -92,6 +95,19 @@ exports.handler = async function (event) {
 
   const AUTH_HEADERS = { 'Content-Type': 'application/json', 'Api-Authorization': apiKey };
   const folderName = (body.folderName || '').trim();
+
+  /* Monta a lista final do rotator: as porcentagens normais (se vier um rotator de
+     verdade) ou o próprio link único a 100% (se for um link "simples"), mais o link
+     do Instagram a 0% no final — igual ao exemplo real que você mandou. */
+  let rotator = null;
+  if (rotatorInput && rotatorInput.length) {
+    rotator = rotatorInput.slice();
+  } else if (fallbackUrl) {
+    rotator = [{ url: longUrl, percentage: 100 }];
+  }
+  if (fallbackUrl && rotator && !rotator.some(function (r) { return r.url === fallbackUrl; })) {
+    rotator.push({ url: fallbackUrl, percentage: 0 });
+  }
 
   /* Tenta associar o link a uma pasta da Switchy com esse nome:
      1) Procura (via GraphQL) se já existe uma pasta com esse nome exato.
@@ -168,12 +184,6 @@ exports.handler = async function (event) {
       const updatePayload = { url: longUrl };
       if (rotator && rotator.length) updatePayload.extraOptionsLinkRotator = buildRotatorPayload(rotator);
       if (folderResolved.folderId) updatePayload.folderId = folderResolved.folderId;
-      /* ⚠️ EXPERIMENTAL: não há documentação pública confirmando que "linkExpiration"
-         funciona como fallback de erro (só vimos esse campo existir no formato de dados
-         de um link real). Setamos "enable: true" sem data, na esperança de que a Switchy
-         trate isso como "sempre disponível como destino alternativo". Se não funcionar
-         como esperado, é só avisar que a gente ajusta. */
-      if (fallbackUrl) updatePayload.linkExpiration = { url: fallbackUrl, enable: true, timezone: -3 };
       switchyRes = await fetch(
         'https://api.switchy.io/v1/links/by-domain/' + encodeURIComponent(domain) + '/' + encodeURIComponent(slug),
         {
@@ -209,7 +219,6 @@ exports.handler = async function (event) {
     if (slug)   linkPayload.id = slug;
     if (rotator && rotator.length) linkPayload.extraOptionsLinkRotator = buildRotatorPayload(rotator);
     if (folderResolved.folderId) linkPayload.folderId = folderResolved.folderId;
-    if (fallbackUrl) linkPayload.linkExpiration = { url: fallbackUrl, enable: true, timezone: -3 };
 
     switchyRes = await fetch('https://api.switchy.io/v1/links/create', {
       method: 'POST',
