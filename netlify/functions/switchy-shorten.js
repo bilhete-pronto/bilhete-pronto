@@ -93,8 +93,20 @@ exports.handler = async function (event) {
     };
   }
 
-  const AUTH_HEADERS = { 'Content-Type': 'application/json', 'Api-Authorization': apiKey };
+  const AUTH_HEADERS = { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Api-Authorization': apiKey };
   const folderName = (body.folderName || '').trim();
+
+  /* Lê a resposta como JSON; se não for JSON (texto puro, HTML de erro, etc.),
+     devolve o texto cru mesmo assim — assim nunca ficamos "sem detalhe nenhum"
+     quando a Switchy responder de um jeito inesperado (como um 406 em texto puro). */
+  async function parseResponseSafe(res) {
+    const text = await res.text().catch(function () { return ''; });
+    try {
+      return { data: JSON.parse(text), rawText: null };
+    } catch (e) {
+      return { data: null, rawText: text };
+    }
+  }
 
   /* Monta a lista final do rotator: as porcentagens normais (se vier um rotator de
      verdade) ou o próprio link único a 100% (se for um link "simples"), mais o link
@@ -201,14 +213,15 @@ exports.handler = async function (event) {
 
       /* 404 = ainda não existe nenhum link com esse padrão → cai pra criação normal abaixo. */
       if (switchyRes.status !== 404) {
-        const data = await switchyRes.json().catch(() => null);
-        if (!switchyRes.ok || !data) {
+        const parsed = await parseResponseSafe(switchyRes);
+        if (!switchyRes.ok || !parsed.data) {
           return {
             statusCode: switchyRes.status || 502,
             headers: CORS_HEADERS,
-            body: JSON.stringify({ error: 'A Switchy retornou um erro ao ATUALIZAR o link existente', detail: data })
+            body: JSON.stringify({ error: 'A Switchy retornou um erro ao ATUALIZAR o link existente', detail: parsed.data, rawText: parsed.rawText })
           };
         }
+        const data = parsed.data;
         const resultUrl = extractResultUrl(data);
         return {
           statusCode: 200,
@@ -232,7 +245,8 @@ exports.handler = async function (event) {
       body: JSON.stringify({ link: linkPayload })
     });
 
-    const data = await switchyRes.json().catch(() => null);
+    const parsedCreate = await parseResponseSafe(switchyRes);
+    const data = parsedCreate.data;
 
     if (!switchyRes.ok || !data) {
       return {
@@ -242,7 +256,8 @@ exports.handler = async function (event) {
           error: attemptedUpdate
             ? 'A Switchy retornou um erro ao criar o link (a atualização não encontrou um link existente, e a criação também falhou)'
             : 'A Switchy retornou um erro ao criar o link',
-          detail: data
+          detail: data,
+          rawText: parsedCreate.rawText
         })
       };
     }
