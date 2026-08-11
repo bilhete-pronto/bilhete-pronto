@@ -68,7 +68,7 @@ exports.handler = async function (event) {
 
   const longUrl = body.url;
   const slug    = (body.slug || '').trim();
-  const domain  = (body.domain || process.env.SWITCHY_DEFAULT_DOMAIN || '').trim();
+  const domain  = (body.domain || process.env.SWITCHY_DEFAULT_DOMAIN || 'hi.switchy.io').trim();
   /* rotator (opcional): [{ url, percentage }, ...] — distribui esse ÚNICO link entre
      vários destinos por porcentagem, usando o Rotator/A-B Testing da própria Switchy. */
   const rotatorInput = Array.isArray(body.rotator) ? body.rotator : null;
