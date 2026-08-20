@@ -212,6 +212,8 @@ exports.handler = async function (event) {
     /* Se um padrão (slug) foi informado, tenta ATUALIZAR primeiro um link que já
        exista com esse padrão nesse domínio — assim, trocar o número não gera conflito,
        só troca o destino do mesmo link. */
+    let updateNotFoundDetail = null;
+    let updateNotFoundStatus = null;
     if (slug && domain) {
       attemptedUpdate = true;
       const updatePayload = { url: mainUrl };
@@ -226,7 +228,10 @@ exports.handler = async function (event) {
         }
       );
 
-      /* 404 = ainda não existe nenhum link com esse padrão → cai pra criação normal abaixo. */
+      /* 404 = ainda não existe nenhum link com esse padrão → cai pra criação normal abaixo.
+         [DIAGNÓSTICO] Antes essa resposta era descartada sem ler; agora guardamos o que a
+         Switchy respondeu no 404, pra caso a criação também falhe depois — assim dá pra ver
+         a mensagem REAL da Switchy em vez de só assumir "não existe". */
       if (switchyRes.status !== 404) {
         const parsed = await parseResponseSafe(switchyRes);
         if (!switchyRes.ok || !parsed.data) {
@@ -244,6 +249,9 @@ exports.handler = async function (event) {
           body: JSON.stringify({ result_url: resultUrl, raw: data, action: 'updated', warning: folderResolved.warning })
         };
       }
+      updateNotFoundStatus = switchyRes.status;
+      const parsedNotFound = await parseResponseSafe(switchyRes);
+      updateNotFoundDetail = parsedNotFound.data || parsedNotFound.rawText || null;
       /* status 404 → segue para criar um link novo */
     }
 
@@ -272,7 +280,17 @@ exports.handler = async function (event) {
             ? 'A Switchy retornou um erro ao criar o link (a atualização não encontrou um link existente, e a criação também falhou)'
             : 'A Switchy retornou um erro ao criar o link',
           detail: data,
-          rawText: parsedCreate.rawText
+          rawText: parsedCreate.rawText,
+          /* [DIAGNÓSTICO] Contexto completo do que foi tentado, pra investigar de vez
+             por que a Switchy diz "não existe" (na atualização) e "já existe" (na
+             criação) ao mesmo tempo pro mesmo padrão. */
+          debug: {
+            slugUsado: slug,
+            domainUsado: domain,
+            updateStatus: updateNotFoundStatus,
+            updateResponseBody: updateNotFoundDetail,
+            createStatus: switchyRes.status
+          }
         })
       };
     }
